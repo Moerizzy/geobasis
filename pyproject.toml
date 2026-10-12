@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geobasis"
+dynamic = ["version"]
+description = "Inoffizielles Werkzeug: amtliche Geobasisdaten (Höhenmodelle, Luftbilder, Kataster, 3D-Gebäude) mit einer Zeile Python finden und laden – zunächst für NRW."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Moritz Lucas" }]
+keywords = ["geodaten", "open data", "nrw", "dgm", "orthophoto", "alkis", "lidar", "gis", "opengeodata"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Natural Language :: German",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+geobasis = "geobasis.cli:main"
+
+[project.urls]
+Quelle = "https://github.com/Moerizzy/geobasis"
+Fehlermeldungen = "https://github.com/Moerizzy/geobasis/issues"
+
+[tool.hatch.version]
+path = "src/geobasis/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geobasis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not online'"
+markers = ["online: greift auf die echten Dienste von Geobasis NRW zu (pytest -m online)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E731", "B008", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
