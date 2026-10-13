@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 _UTM = re.compile(r"(?:^|_)32_?(\d{3})_(\d{4})_(\d{1,2})(?=[_.]|$)")
 _GK = re.compile(r"(?:^|_)([2-5])(\d{3})_(\d{4})_(\d{1,2})(?=[_.]|$)")
-_YEAR = re.compile(r"_(?:nw|NW)_(\d{4})(?=[_.]|$)")
+_YEAR = re.compile(r"_(?:[a-z]{2}|[A-Z]{2})_(\d{4})(?=[_.-]|$)")  # ..._nw_2022, ..._ni_2025-03-03
 
 
 @dataclass(frozen=True)

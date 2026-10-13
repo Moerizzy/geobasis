@@ -15,7 +15,9 @@ def test_download_and_manifest(fake, tmp_path):
     for f in sel:
         assert (folder / f.name).stat().st_size == f.size
     man = json.loads((folder / "manifest.json").read_text("utf-8"))
-    assert man["produkt"] == "dgm1" and man["lizenz"].startswith("Datenlizenz")
+    assert man["produkt"] == "dgm1"
+    assert [q["land"] for q in man["quellen"]] == ["Nordrhein-Westfalen"]
+    assert man["quellen"][0]["lizenz"].startswith("Datenlizenz")
     assert len(man["dateien"]) == len(sel)
     assert man["gebiete"] == ["Gemeinde Münster (05515000)"]
     fc = json.loads((folder / "kacheln.geojson").read_text("utf-8"))

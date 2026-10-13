@@ -7,9 +7,9 @@ import fnmatch
 import json
 import sys
 
-from . import http
+from . import bund, http
 from ._version import __version__
-from .laender import land
+from .laender import LAENDER, land
 from .models import RemoteFile, Selection, format_size
 
 CONFIRM_ABOVE = 5_000_000_000  # bytes; larger downloads need --ja
@@ -17,6 +17,7 @@ CONFIRM_ABOVE = 5_000_000_000  # bytes; larger downloads need --ja
 EPILOG = """Beispiele:
   geobasis produkte
   geobasis suche dgm1 --gemeinde "Bad Honnef"
+  geobasis suche dgm1 --bbox 7.9,52.2,8.1,52.4        # NRW und Niedersachsen zusammen
   geobasis download dop10 --punkt 6.958,50.941 --radius 500 -o daten
   geobasis download flurstuecke --gemeinde Münster -o daten
   geobasis jahre dop-hist --punkt 7.626,51.962
@@ -57,10 +58,20 @@ def _add_select(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="geobasis", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG,
-        description="Amtliche Geobasisdaten finden und herunterladen (derzeit: NRW).")
+        description="Amtliche Geobasisdaten finden und herunterladen "
+                    "(derzeit Nordrhein-Westfalen und Niedersachsen).")
     ap.add_argument("--version", action="version", version=f"geobasis {__version__}")
-    ap.add_argument("--land", default="nw", help="Bundesland (derzeit nur: nw)")
+    land_help = f"nur dieses Land ({', '.join(LAENDER)}); ohne Angabe: alle"
+    ap.add_argument("--land", default=None, help=land_help)
+    common = argparse.ArgumentParser(add_help=False)  # --land also after the command
+    common.add_argument("--land", default=argparse.SUPPRESS, help=land_help)
     sub = ap.add_subparsers(dest="cmd", metavar="BEFEHL")
+    _add = sub.add_parser
+
+    def add_parser(*args, **kw):
+        return _add(*args, parents=[common], **kw)
+
+    sub.add_parser = add_parser  # type: ignore[method-assign]
 
     p = sub.add_parser("produkte", aliases=["products", "liste"], help="verfügbare Produkte")
     p.add_argument("--kategorie", help="nur eine Kategorie, z. B. Höhenmodelle")
@@ -134,65 +145,90 @@ def _print_notes(sel: Selection) -> None:
         print(f"Hinweis: {n}")
 
 
-def cmd_produkte(a, lnd) -> int:
-    ps = lnd.products(a.kategorie)
+def _lands(a) -> list:
+    return [land(a.land)] if a.land else list(LAENDER.values())
+
+
+def cmd_produkte(a) -> int:
+    lands = _lands(a)
     if a.json:
-        print(json.dumps([p.info() for p in ps], ensure_ascii=False, indent=1))
+        print(json.dumps([p.info() for lnd in lands for p in lnd.products(a.kategorie)],
+                         ensure_ascii=False, indent=1))
         return 0
-    for cat in lnd.categories():
-        rows = [[p.id, p.title, p.format, p.resolution] for p in ps if p.category == cat]
-        if rows:
-            print(f"\n{cat}")
-            print(_table(rows, ["ID", "Titel", "Format", "Auflösung"]))
-    print(f"\nQuelle: {lnd.name}, Lizenz: {lnd.license}")
+    for lnd in lands:
+        ps = lnd.products(a.kategorie)
+        if not ps:
+            continue
+        print(f"\n=== {lnd.name} ({lnd.code}) – Lizenz: {lnd.license}")
+        for cat in lnd.categories():
+            rows = [[p.id, p.title, p.format, p.resolution] for p in ps if p.category == cat]
+            if rows:
+                print(f"\n{cat}")
+                print(_table(rows, ["ID", "Titel", "Format", "Auflösung"]))
     return 0
 
 
-def cmd_info(a, lnd) -> int:
-    p = lnd.product(a.produkt)
-    d = p.info()
-    if p.aliases:
-        d["aliase"] = ", ".join(p.aliases)
-    if p.yearly:
-        d["jahrgaenge"] = ", ".join(map(str, p.years()))
-    elif p.kind != "wfs":
-        sel = p.find(None, with_meta=False)
-        d["dateien"] = f"{len(sel)} ({format_size(sel.total_size)} gesamt)"
+def cmd_info(a) -> int:
+    found = [lnd.product(a.produkt) for lnd in _lands(a) if lnd.has_product(a.produkt)]
+    if not found:
+        bund.find(a.produkt, land=a.land)  # raises KeyError with suggestions
+    out = []
+    for p in found:
+        d = p.info()
+        if p.aliases:
+            d["aliase"] = ", ".join(p.aliases)
+        if p.yearly:
+            d["jahrgaenge"] = ", ".join(map(str, p.years()))
+        elif p.kind != "wfs" and p.enumerable:
+            sel = p.find(None, with_meta=False)
+            d["dateien"] = f"{len(sel)} ({format_size(sel.total_size)} gesamt)"
+        out.append(d)
     if a.json:
-        print(json.dumps(d, ensure_ascii=False, indent=1))
+        print(json.dumps(out if len(out) > 1 else out[0], ensure_ascii=False, indent=1))
         return 0
-    w = max(len(k) for k in d)
-    for k, v in d.items():
-        print(f"{k:<{w}}  {', '.join(v) if isinstance(v, list) else v}")
+    for i, d in enumerate(out):
+        if i:
+            print()
+        w = max(len(k) for k in d)
+        for k, v in d.items():
+            print(f"{k:<{w}}  {', '.join(v) if isinstance(v, list) else v}")
     return 0
 
 
-def cmd_jahre(a, lnd) -> int:
-    p = lnd.product(a.produkt)
-    if not p.yearly:
-        print(f"'{p.id}' ist kein Archivprodukt (nur aktueller Stand).")
+def cmd_jahre(a) -> int:
+    area, lands = bund.area(land=a.land, **_area_kw(a))
+    products = [lnd.product(a.produkt) for lnd in lands if lnd.has_product(a.produkt)]
+    if not products:
+        bund.find(a.produkt, land=a.land, **_area_kw(a))  # raises KeyError with suggestions
+    archives = [p for p in products if p.yearly]
+    if not archives:
+        print(f"'{a.produkt}' ist kein Archivprodukt (nur aktueller Stand).")
         return 0
-    area = lnd.area(**_area_kw(a))
-    if area is None:
-        print(" ".join(map(str, p.years())))
-        return 0
-    print(f"Abdeckung für {area.label} (kann beim ersten Mal etwas dauern) ...", file=sys.stderr)
-    cov = p.coverage(area)
-    rows = [[str(y), str(n)] for y, n in cov.items() if n]
-    print(_table(rows, ["Jahr", "Dateien"]))
-    missing = [str(y) for y, n in cov.items() if not n]
-    if missing:
-        print(f"\nOhne Daten im Gebiet: {', '.join(missing)}")
+    for p in archives:
+        prefix = f"{p.land.upper()}: " if len(archives) > 1 else ""
+        if area is None:
+            print(prefix + " ".join(map(str, p.years())))
+            continue
+        print(f"{prefix}Abdeckung für {area.label} (kann beim ersten Mal etwas dauern) ...",
+              file=sys.stderr)
+        cov = p.coverage(area)
+        if len(archives) > 1:
+            print(f"\n{p.land.upper()} – {p.title}")
+        print(_table([[str(y), str(n)] for y, n in cov.items() if n], ["Jahr", "Dateien"]))
+        missing = [str(y) for y, n in cov.items() if not n]
+        if missing:
+            print(f"\nOhne Daten im Gebiet: {', '.join(missing)}")
     return 0
 
 
-def _selection(a, lnd) -> Selection:
-    return lnd.find(a.produkt, year=a.jahr, variant=a.variante, latest=not a.alle_fassungen,
-                    with_meta=not getattr(a, "ohne_metadaten", False), **_area_kw(a))
+def _selection(a) -> Selection:
+    return bund.find(a.produkt, land=a.land, year=a.jahr, variant=a.variante,
+                     latest=not a.alle_fassungen,
+                     with_meta=not getattr(a, "ohne_metadaten", False), **_area_kw(a))
 
 
-def cmd_suche(a, lnd) -> int:
-    sel = _selection(a, lnd)
+def cmd_suche(a) -> int:
+    sel = _selection(a)
     if a.out_geojson:
         sel.save_geojson(a.out_geojson)
     if a.json:
@@ -200,11 +236,15 @@ def cmd_suche(a, lnd) -> int:
         return 0
     print(sel.summary())
     _print_notes(sel)
-    rows = [[f.name, format_size(f.size), f.date or (str(f.year) if f.year else ""),
-             f.meta.get("Kreis") or f.meta.get("Regierungsbezirk") or f.key or ""]
-            for f in sel[: a.zeilen]]
+    multi = len({f.land for f in sel}) > 1
+    rows = []
+    for f in sel[: a.zeilen]:
+        row = [f.name, format_size(f.size), f.date or (str(f.year) if f.year else ""),
+               f.meta.get("Kreis") or f.meta.get("Regierungsbezirk") or f.key or ""]
+        rows.append(([f.land.upper()] if multi else []) + row)
     if rows:
-        print(_table(rows, ["Datei", "Größe", "Stand", "Kachel/Gebiet"]))
+        head = ["Datei", "Größe", "Stand", "Kachel/Gebiet"]
+        print(_table(rows, (["Land"] if multi else []) + head))
     if len(sel) > a.zeilen:
         print(f"... und {len(sel) - a.zeilen} weitere (--zeilen N oder --json für alle)")
     if a.out_geojson:
@@ -212,8 +252,9 @@ def cmd_suche(a, lnd) -> int:
     return 0
 
 
-def cmd_download(a, lnd) -> int:
-    sel = _selection(a, lnd)
+def cmd_download(a) -> int:
+    sel = _selection(a)
+
     print(sel.summary())
     _print_notes(sel)
     if not sel:
@@ -244,32 +285,41 @@ def cmd_download(a, lnd) -> int:
     return 0 if res.ok else 1
 
 
-def cmd_gemeinden(a, lnd) -> int:
-    if a.kreise:
-        units, what = lnd.kreise(a.suche), "Kreise"
-    elif a.regbez:
-        units, what = lnd.regierungsbezirke(a.suche), "Regierungsbezirke"
-    else:
-        units, what = lnd.gemeinden(a.suche), "Gemeinden"
+def cmd_gemeinden(a) -> int:
+    units = []
+    for lnd in _lands(a):
+        if a.kreise:
+            units += lnd.kreise(a.suche)
+        elif a.regbez:
+            units += lnd.regierungsbezirke(a.suche)
+        else:
+            units += lnd.gemeinden(a.suche)
+    what = "Kreise" if a.kreise else "Regierungsbezirke" if a.regbez else "Gemeinden"
     if a.json:
-        print(json.dumps([{"name": u.name, "ags": u.ags, "bbox": u.bbox.as_tuple()} for u in units],
-                         ensure_ascii=False, indent=1))
+        print(json.dumps([{"name": u.name, "ags": u.ags, "art": u.bez, "land": u.land,
+                           "bbox": u.bbox.as_tuple()} for u in units], ensure_ascii=False, indent=1))
         return 0
-    print(_table([[u.ags, u.name] for u in units], ["Schlüssel", "Name"]))
+    print(_table([[u.land.upper(), u.ags, u.name, u.bez] for u in units],
+                 ["Land", "Schlüssel", "Name", "Art"]))
     print(f"\n{len(units)} {what}")
     return 0
 
 
-def cmd_dienste(a, lnd) -> int:
-    svc = lnd.services()
+def cmd_dienste(a) -> int:
+    svc = [dict(s, land=lnd.code) for lnd in _lands(a) for s in lnd.services()]
     if a.json:
         print(json.dumps(svc, ensure_ascii=False, indent=1))
         return 0
-    print(_table([[s["typ"], s["titel"], s["url"]] for s in svc], ["Typ", "Titel", "URL"]))
+    if not svc:
+        print("Für dieses Land sind noch keine Dienste hinterlegt.")
+        return 0
+    print(_table([[s["land"].upper(), s["typ"], s["titel"], s["url"]] for s in svc],
+                 ["Land", "Typ", "Titel", "URL"]))
     return 0
 
 
-def cmd_portal(a, lnd) -> int:
+def cmd_portal(a) -> int:
+    lnd = land(a.land or "nw")
     portal = getattr(lnd, "portal", None)
     if portal is None:
         print(f"Für {lnd.short} gibt es keinen Portal-Browser.", file=sys.stderr)
@@ -310,7 +360,7 @@ def cmd_portal(a, lnd) -> int:
     return 0
 
 
-def cmd_cache(a, lnd) -> int:
+def cmd_cache(a) -> int:
     d = http.cache_dir()
     if a.leeren:
         n = http.clear_cache()
@@ -338,8 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.print_help()
         return 0
     try:
-        lnd = land(a.land)
-        return COMMANDS[a.cmd](a, lnd)
+        return COMMANDS[a.cmd](a)
     except (KeyError, LookupError, ValueError) as e:
         msg = e.args[0] if e.args else str(e)
         print(f"Fehler: {msg}", file=sys.stderr)

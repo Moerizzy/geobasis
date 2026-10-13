@@ -46,6 +46,7 @@ class RemoteFile:
     meta: dict[str, Any] = field(default_factory=dict)
     subdir: str = ""  # relative folder inside the product output folder
     post_data: bytes | None = None  # for WFS requests sent via POST
+    land: str = ""  # state code, e.g. "nw"
 
     def footprint(self, dst: int = 4326) -> dict | None:
         """GeoJSON polygon of the tile outline in EPSG:``dst``."""
@@ -65,14 +66,21 @@ class RemoteFile:
 
 
 class Selection(list):
-    """List of :class:`RemoteFile` for one product and area, with helpers."""
+    """List of :class:`RemoteFile` for one product and area, with helpers.
+
+    A selection may span several states (see :func:`geobasis.find`); then
+    ``products`` holds the product of every state involved and ``name`` is
+    the product name the user asked for (used as output folder)."""
 
     def __init__(self, files: Iterable[RemoteFile] = (), product: Product | None = None,
-                 area: Area | None = None, notes: list[str] | None = None):
+                 area: Area | None = None, notes: list[str] | None = None,
+                 products: list[Product] | None = None, name: str | None = None):
         super().__init__(files)
         self.product = product
+        self.products: list[Product] = products or ([product] if product else [])
         self.area = area
         self.notes: list[str] = notes or []
+        self.name = name or (product.id if product else "")
 
     @property
     def total_size(self) -> int:
@@ -84,7 +92,10 @@ class Selection(list):
 
     def summary(self) -> str:
         p = self.product
-        name = f"{p.id} ({p.title})" if p else "?"
+        if len(self.products) > 1:
+            name = f"{self.name} ({', '.join(f'{q.land.upper()}: {q.title}' for q in self.products)})"
+        else:
+            name = f"{p.id} ({p.title})" if p else "?"
         where = f" für {self.area.label}" if self.area else " für das ganze Land"
         size = format_size(self.total_size)
         if self.unknown_sizes:
@@ -93,7 +104,12 @@ class Selection(list):
         span = ""
         if dates:
             span = f", Stand {dates[0]}" if len(dates) == 1 else f", Stand {dates[0]} bis {dates[-1]}"
-        return f"{name}{where}: {len(self)} Datei(en), {size}{span}"
+        per_land = ""
+        lands = sorted({f.land for f in self if f.land})
+        if len(lands) > 1:
+            per_land = " (" + ", ".join(f"{lnd.upper()} {sum(1 for f in self if f.land == lnd)}"
+                                       for lnd in lands) + ")"
+        return f"{name}{where}: {len(self)} Datei(en){per_land}, {size}{span}"
 
     def to_geojson(self, dst: int = 4326) -> dict:
         feats = []
@@ -140,6 +156,7 @@ class Product:
     land: str = ""
     aliases: tuple[str, ...] = ()
     raster: bool = False  # GDAL-readable raster tiles (VRT possible)
+    enumerable: bool = True  # False: listing the whole state is too expensive
 
     # --- public API ---------------------------------------------------------
     def find(self, area: Area | None = None, *, year: int | None = None,
@@ -153,6 +170,8 @@ class Product:
                              f"(verfügbar: {', '.join(self.variants) or 'keine'})")
         files = self._find(area, year=year, variant=variant or self.default_variant,
                            latest=latest, with_meta=with_meta)
+        for f in files:
+            f.land = f.land or self.land
         return files
 
     def years(self) -> list[int]:
@@ -181,7 +200,7 @@ class Product:
 
     def info(self) -> dict[str, Any]:
         d = {
-            "id": self.id, "titel": self.title, "kategorie": self.category,
+            "id": self.id, "land": self.land.upper(), "titel": self.title, "kategorie": self.category,
             "art": {"tiles": "Kacheln", "admin": "je Verwaltungseinheit", "single": "eine Datei",
                     "wfs": "Ausschnitt per WFS"}.get(self.kind, self.kind),
             "format": self.format, "aufloesung": self.resolution, "crs": self.crs,

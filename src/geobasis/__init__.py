@@ -1,21 +1,24 @@
 """geobasis – amtliche Geobasisdaten mit einer Zeile Python.
 
->>> from geobasis import nrw
->>> sel = nrw.find("dgm1", gemeinde="Bad Honnef")
+>>> import geobasis
+>>> sel = geobasis.find("dgm1", gemeinde="Bad Honnef")
 >>> print(sel.summary())
 >>> sel.download("daten/")
+
+Einzelne Länder: ``geobasis.nrw``, ``geobasis.ni``.
 """
 
 from __future__ import annotations
 
 from ._version import __version__
 from .area import Area
+from .bund import area, download, find
 from .download import DownloadResult
-from .laender import LAENDER, Land, land, nrw
+from .laender import LAENDER, Land, land, ni, nrw
 from .models import Product, RemoteFile, Selection
 
 __all__ = ["LAENDER", "Area", "DownloadResult", "Land", "Product", "RemoteFile", "Selection",
-           "__version__", "land", "nrw", "products"]
+           "__version__", "area", "download", "find", "land", "ni", "nrw", "products"]
 
 
 def products() -> list[Product]:

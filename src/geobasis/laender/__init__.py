@@ -1,12 +1,14 @@
-"""Registry of supported states. Currently: NRW."""
+"""Registry of supported states."""
 
 from __future__ import annotations
 
 from .base import Land
+from .ni import ni
 from .nrw import nrw
 
-LAENDER: dict[str, Land] = {"nw": nrw}
-_ALIASES = {"nrw": "nw", "nordrhein-westfalen": "nw", "05": "nw"}
+LAENDER: dict[str, Land] = {"nw": nrw, "ni": ni}
+_ALIASES = {"nrw": "nw", "nordrhein-westfalen": "nw", "05": "nw",
+            "nds": "ni", "niedersachsen": "ni", "03": "ni"}
 
 
 def land(code: str) -> Land:
@@ -18,4 +20,4 @@ def land(code: str) -> Land:
     return LAENDER[c]
 
 
-__all__ = ["LAENDER", "Land", "land", "nrw"]
+__all__ = ["LAENDER", "Land", "land", "ni", "nrw"]

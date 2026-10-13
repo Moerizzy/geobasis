@@ -157,6 +157,16 @@ def fetch_json(url: str, **kw):
     return json.loads(fetch(url, **kw))
 
 
+def head_size(url: str) -> int | None:
+    """Content-Length of ``url`` via a HEAD request (``None`` if unknown)."""
+    try:
+        with request(url, method="HEAD", timeout=60, retries=2) as r:
+            v = r.headers.get("Content-Length")
+            return int(v) if v is not None else None
+    except (HTTPError, ValueError, urllib.error.HTTPError):
+        return None
+
+
 def clear_cache() -> int:
     """Delete the on-disk cache. Returns the number of removed files."""
     import shutil

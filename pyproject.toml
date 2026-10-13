@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "geobasis"
 dynamic = ["version"]
-description = "Inoffizielles Werkzeug: amtliche Geobasisdaten (Höhenmodelle, Luftbilder, Kataster, 3D-Gebäude) mit einer Zeile Python finden und laden – zunächst für NRW."
+description = "Inoffizielles Werkzeug: amtliche Geobasisdaten (Höhenmodelle, Luftbilder, Kataster, 3D-Gebäude) mit einer Zeile Python finden und laden – für NRW und Niedersachsen."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Moritz Lucas" }]
-keywords = ["geodaten", "open data", "nrw", "dgm", "orthophoto", "alkis", "lidar", "gis", "opengeodata"]
+keywords = ["geodaten", "open data", "nrw", "niedersachsen", "stac", "dgm", "orthophoto", "alkis", "lidar", "gis", "opengeodata"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

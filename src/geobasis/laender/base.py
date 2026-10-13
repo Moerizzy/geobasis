@@ -7,19 +7,27 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..area import Area
+from ..geo import BBox
 from ..models import Product, Selection
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..download import DownloadResult
+    from ..grenzen import BoundaryProvider, Unit
 
 
 class Land:
-    """A state with its product catalogue. Subclasses fill ``_products`` and
-    implement administrative lookups (``_admin_area``)."""
+    """A state with its product catalogue and administrative units."""
 
-    code: str = ""
+    code: str = ""  # two letters, e.g. "nw"
+    ags: str = ""  # state key, first two digits of every AGS, e.g. "05"
     name: str = ""
     short: str = ""
+    license: str = ""
+    license_url: str = ""
+    attribution: str = ""
+    bbox: BBox | None = None  # rough extent in EPSG:25832, for routing queries
+    boundaries: BoundaryProvider | None = None
+    portal = None  # optional browser for an open-data portal
 
     def __init__(self) -> None:
         self._products: dict[str, Product] = {}
@@ -38,6 +46,13 @@ class Land:
             if p.category not in seen:
                 seen.append(p.category)
         return seen
+
+    def has_product(self, product_id: str) -> bool:
+        try:
+            self.product(product_id)
+            return True
+        except KeyError:
+            return False
 
     def product(self, product_id: str | Product) -> Product:
         if isinstance(product_id, Product):
@@ -69,20 +84,36 @@ class Land:
             return None
         if area is not None:
             return area
-        if gemeinde is not None:
-            return self._admin_area("gemeinde", gemeinde)
-        if kreis is not None:
-            return self._admin_area("kreis", kreis)
-        if regbez is not None:
-            return self._admin_area("regbez", regbez)
+        for level, query in (("gemeinde", gemeinde), ("kreis", kreis), ("regbez", regbez)):
+            if query is not None:
+                return self.admin_area(level, query)
         if bbox is not None:
             return Area.from_bbox(bbox, crs)
         if point is not None:
             return Area.from_point(point, radius, crs)
         return Area.from_geojson(geojson, crs)
 
-    def _admin_area(self, level: str, query: str) -> Area:  # pragma: no cover
-        raise NotImplementedError(f"{self.short}: Verwaltungseinheiten nicht verfügbar")
+    def admin_area(self, level: str, query: str) -> Area:
+        if self.boundaries is None:
+            raise LookupError(f"{self.short}: Verwaltungseinheiten sind nicht verfügbar")
+        return self.boundaries.area(level, query)
+
+    def _units(self, level: str, suche: str | None) -> list[Unit]:
+        if self.boundaries is None or level not in self.boundaries.levels:
+            return []
+        return self.boundaries.search(level, suche)
+
+    def gemeinden(self, suche: str | None = None) -> list[Unit]:
+        return self._units("gemeinde", suche)
+
+    def kreise(self, suche: str | None = None) -> list[Unit]:
+        return self._units("kreis", suche)
+
+    def regierungsbezirke(self, suche: str | None = None) -> list[Unit]:
+        return self._units("regbez", suche)
+
+    def services(self) -> list[dict[str, str]]:
+        return []
 
     # -- convenience -----------------------------------------------------------
     def find(self, product: str | Product, *, year: int | None = None,

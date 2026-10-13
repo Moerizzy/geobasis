@@ -153,7 +153,7 @@ def download_selection(sel: Selection, out: str | Path = ".", *, workers: int = 
                        manifest: bool = True) -> DownloadResult:
     """Download all files of a selection into ``out/<product>/``."""
     out = Path(out)
-    folder = out / sel.product.id if (subdir and sel.product) else out
+    folder = out / sel.name if (subdir and sel.name) else out
     res = DownloadResult(folder=folder)
     if not sel:
         return res
@@ -184,7 +184,7 @@ def download_selection(sel: Selection, out: str | Path = ".", *, workers: int = 
                 res.downloaded += 1
     prog.close()
     res.files.sort()
-    if manifest and sel.product:
+    if manifest and sel.products:
         res.manifest = _write_manifest(sel, folder, res)
         if any(f.bounds for f in sel):
             res.footprints = _write_footprints(sel, folder)
@@ -194,12 +194,13 @@ def download_selection(sel: Selection, out: str | Path = ".", *, workers: int = 
         years = sorted({f.year for f in sel if f.year and f.subdir})
         suffix = f"_{years[0]}" if len(years) == 1 else ""
         res.vrt = build_vrt([p for p in res.files if p.suffix.lower() in (".tif", ".jp2")],
-                            folder / f"{sel.product.id}{suffix}.vrt")
+                            folder / f"{sel.name}{suffix}.vrt")
     return res
 
 
 def _write_manifest(sel: Selection, folder: Path, res: DownloadResult) -> Path:
-    p = sel.product
+    from .laender import LAENDER
+
     path = folder / "manifest.json"
     old: dict = {}
     if path.exists():
@@ -214,18 +215,21 @@ def _write_manifest(sel: Selection, folder: Path, res: DownloadResult) -> Path:
             d = f.to_dict()
             d["datei"] = str(_target(folder, f).relative_to(folder))
             entries[f.name] = d
+    sources = {(q.get("land"), q.get("produkt")): q for q in old.get("quellen", [])}
+    for p in sel.products:
+        land = LAENDER.get(p.land)
+        sources[(getattr(land, "name", p.land), p.id)] = {
+            "land": getattr(land, "name", p.land), "produkt": p.id, "titel": p.title,
+            "quelle": p.source, "lizenz": p.license, "lizenz_url": getattr(land, "license_url", ""),
+            "namensnennung": getattr(land, "attribution", ""),
+        }
     areas = list(old.get("gebiete", []))
     label = sel.area.label if sel.area else "ganzes Land"
     if label not in areas:
         areas.append(label)
-    from .laender import LAENDER
-
-    land = LAENDER.get(p.land)
     doc = {
-        "produkt": p.id, "titel": p.title, "land": getattr(land, "name", p.land),
-        "quelle": p.source, "lizenz": p.license, "lizenz_url": getattr(land, "license_url", ""),
-        "namensnennung_empfohlen": getattr(land, "attribution", ""),
-        "gebiete": areas, "aktualisiert": _dt.datetime.now().isoformat(timespec="seconds"),
+        "produkt": sel.name, "quellen": list(sources.values()), "gebiete": areas,
+        "aktualisiert": _dt.datetime.now().isoformat(timespec="seconds"),
         "werkzeug": f"geobasis {__version__}", "hinweise": sel.notes,
         "dateien": sorted(entries.values(), key=lambda e: e["name"]),
     }

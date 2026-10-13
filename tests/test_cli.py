@@ -43,8 +43,11 @@ def test_download(fake, capsys, tmp_path):
 
 
 def test_jahre(fake, capsys):
-    assert main(["jahre", "dop-hist"]) == 0
+    assert main(["--land", "nw", "jahre", "dop-hist"]) == 0
     assert capsys.readouterr().out.split() == ["1952", "2015"]
+    assert main(["jahre", "dop-hist"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "NW: 1952 2015" and lines[1].startswith("NI: 2014 2015")
     assert main(["jahre", "dop-hist", "--gemeinde", "Münster"]) == 0
     assert "2015" in capsys.readouterr().out
 
@@ -77,3 +80,12 @@ def test_errors(fake, capsys):
 def test_cache(capsys):
     assert main(["cache"]) == 0
     assert main(["cache", "--leeren"]) == 0
+
+
+def test_land_option_before_and_after_command(fake, capsys):
+    assert main(["produkte", "--land", "ni"]) == 0
+    out = capsys.readouterr().out
+    assert "Niedersachsen" in out and "Nordrhein-Westfalen" not in out
+    assert main(["--land", "nw", "produkte"]) == 0
+    out = capsys.readouterr().out
+    assert "Nordrhein-Westfalen" in out and "Niedersachsen" not in out

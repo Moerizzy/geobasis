@@ -44,6 +44,59 @@ UNITS = {
     ],
 }
 
+# Niedersachsen (VG250/VG25 style: lower-case fields, 5-digit district keys)
+UNITS_NI = {
+    "gem": [
+        ("Osnabrück", "03404000", "Stadt", square(430000, 5788000, 432000, 5790000)),
+        ("Wallenhorst", "03459033", "Gemeinde", square(430000, 5790000, 432000, 5792000)),
+        ("Munster", "03358016", "Stadt", square(560000, 5870000, 562000, 5872000)),
+    ],
+    "krs": [
+        ("Osnabrück", "03404", "Kreisfreie Stadt", square(430000, 5788000, 432000, 5790000)),
+        ("Osnabrück", "03459", "Landkreis", square(420000, 5770000, 446000, 5800000)),
+        ("Heidekreis", "03358", "Landkreis", square(540000, 5850000, 580000, 5890000)),
+    ],
+}
+
+
+def _ni_items():
+    """STAC items for the fake LGLN catalogues: {service: [(collection, item)]}."""
+    to_ll = transformer(25832, 4326)
+
+    def item(iid, e, n, size_km, date, assets):
+        x0, y0, x1, y1 = e * 1000, n * 1000, (e + size_km) * 1000, (n + size_km) * 1000
+        (a, b), (c, d) = to_ll(x0, y0), to_ll(x1, y1)
+        return {"type": "Feature", "id": iid, "bbox": [a, b, c, d],
+                "geometry": square(a, b, c, d),
+                "properties": {"datetime": f"{date}T00:00:00Z", "bildflugname": "Test"},
+                "assets": assets}
+
+    out = {"dgm": [], "dop": []}
+    for e in (430, 431):
+        for n in (5788, 5789):
+            for year, date in ((2017, "2017-03-13"), (2023, "2023-06-04")):
+                iid = f"dgm1_32_{e}_{n}_1_ni_{year}"
+                out["dgm"].append(("dgm1", item(iid, e, n, 1, date, {
+                    "dgm1-tif": {"href": f"/files/ni/{iid}.tif", "roles": ["data"]},
+                    "dgm1-metadata": {"href": f"/files/ni/{iid}.xml", "roles": ["metadata"]}})))
+    for date in ("2014-04-16", "2020-03-26", "2025-03-03"):
+        iid = f"dop20rgbi_32_430_5788_2_ni_{date}"
+        out["dop"].append(("DOP", item(iid, 430, 5788, 2, date, {
+            "dop20_rgb": {"href": f"/files/ni/{iid.replace('rgbi', 'rgb')}.tif", "roles": ["data"]},
+            "dop20_rgbi": {"href": f"/files/ni/{iid}.tif", "roles": ["data"]}})))
+    for e in (430, 431):
+        for n in (5788, 5789):
+            iid = f"dop10rgbi_32_{e}_{n}_1_ni_2025-03-03"
+            out["dop"].append(("DOP", item(iid, e, n, 1, "2025-03-03", {
+                "dop20_rgb": {"href": f"/files/ni/{iid.replace('rgbi', 'rgb')}.tif", "roles": ["data"]},
+                "dop20_rgbi": {"href": f"/files/ni/{iid}.tif", "roles": ["data"]}})))
+    return out
+
+
+NI_ITEMS = _ni_items()
+NI_EXTENT = {"dgm": ["2017-03-13T00:00:00+00:00", "2023-06-04T00:00:00+00:00"],
+             "dop": ["2014-04-16T00:00:00+00:00", "2025-03-03T00:00:00+00:00"]}
+
 
 def _payload(name: str, n: int) -> bytes:
     return (name.encode() * (n // max(len(name), 1) + 1))[:n]
@@ -134,6 +187,14 @@ class Tree:
                     meta.append(f"{gx}000.000;{gy}000.000;x;1952/{name};EPSG:{code};1952-05-0{code % 10};0.4;PAN")
             self.folder(f"{root}hist_dop_1952/epsg_{code}/", datasets=[("hist", hist_files)],
                         metafiles=[("dop_meta.zip", _zip_bytes({"dop1952_meta.csv": "\n".join(meta).encode()}))])
+        ni_dir = self.root.parent / "files" / "ni"
+        ni_dir.mkdir(parents=True, exist_ok=True)
+        for items in NI_ITEMS.values():
+            for _, it in items:
+                for a in it["assets"].values():
+                    name = a["href"].rsplit("/", 1)[1]
+                    size = 400 if "rgbi" in name else 100
+                    (ni_dir / name).write_bytes(_payload(name, size))
         self.folder(root + "hist_dop_2015/", folders=["epsg_25832"])
         self.folder(root + "hist_dop_2015/epsg_25832/", datasets=[("hist", [
             (f"dop10rgbi_32{e}_{n}_1_nw_2015.jp2", b"j" * 50, None)
@@ -147,10 +208,23 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # keep test output quiet
         pass
 
+    def do_HEAD(self):
+        p = self.root / urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lstrip("/")
+        if not p.is_file():
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(p.stat().st_size))
+        self.end_headers()
+
     def do_GET(self):
         u = urllib.parse.urlsplit(self.path)
         if u.path == "/dvg":
             return self._dvg(urllib.parse.parse_qs(u.query))
+        if u.path in ("/vg250", "/vg25"):
+            return self._vg(urllib.parse.parse_qs(u.query))
+        if u.path.startswith("/stac/"):
+            return self._stac(u.path, urllib.parse.parse_qs(u.query))
         rel = urllib.parse.unquote(u.path).lstrip("/")
         p = self.root / rel
         if p.is_dir():
@@ -189,6 +263,53 @@ class Handler(BaseHTTPRequestHandler):
               "features": [{"type": "Feature", "properties": {"GN": n, "KN": k}, "geometry": g}
                            for n, k, g in units]}
         self._send(json.dumps(fc).encode(), "application/json")
+
+    def _vg(self, q):
+        typename = q["TYPENAMES"][0].split(":")[1]  # vg250_gem / vg25_krs
+        units = UNITS_NI[typename.rsplit("_", 1)[1]]
+        flt = q.get("FILTER", [""])[0]
+        field = re.search(r"<fes:ValueReference>(\w+)</fes:ValueReference>", flt).group(1)
+        value = re.search(r"<fes:Literal>(\w+)</fes:Literal>", flt).group(1)
+        if field == "ags":
+            units = [u for u in units if u[1] == value]
+        elif field == "sn_l" and value != "03":
+            units = []
+        fc = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": g,
+             "properties": {"gen": n, "ags": k, "bez": b, "sn_l": "03", "gf": 4}}
+            for n, k, b, g in units]}
+        self._send(json.dumps(fc).encode(), "application/json")
+
+    def _stac(self, path, q):
+        parts = path.strip("/").split("/")  # stac/<svc>/collections/<coll>[/items]
+        svc, coll = parts[1], parts[3]
+        if len(parts) == 4:
+            doc = {"id": coll, "extent": {"temporal": {"interval": [NI_EXTENT[svc]]}}}
+            return self._send(json.dumps(doc).encode(), "application/json")
+        items = [it for c, it in NI_ITEMS[svc] if c == coll]
+        if "bbox" in q:
+            x0, y0, x1, y1 = map(float, q["bbox"][0].split(","))
+            items = [it for it in items if not (it["bbox"][0] > x1 or it["bbox"][2] < x0
+                                                or it["bbox"][1] > y1 or it["bbox"][3] < y0)]
+        if "datetime" in q:
+            start, end = q["datetime"][0].split("/")
+            items = [it for it in items if start[:10] <= it["properties"]["datetime"][:10] <= end[:10]]
+        limit = int(q.get("limit", ["10"])[0])
+        start = int(q.get("token", ["0"])[0])
+        base = f"http://{self.headers['Host']}"
+        page = []
+        for it in items[start:start + limit]:
+            it = json.loads(json.dumps(it))
+            for a in it["assets"].values():
+                a["href"] = base + a["href"]
+            page.append(it)
+        links = []
+        if start + limit < len(items):
+            nq = dict((k, v[0]) for k, v in q.items())
+            nq["token"] = str(start + limit)
+            links.append({"rel": "next", "href": f"{base}{path}?{urllib.parse.urlencode(nq)}"})
+        doc = {"type": "FeatureCollection", "features": page, "links": links}
+        self._send(json.dumps(doc).encode(), "application/json")
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()

@@ -3,7 +3,7 @@ import json
 import pytest
 
 from geobasis import Area, nrw
-from geobasis.laender.nrw import grenzen
+from geobasis.laender.nrw.grenzen import provider as grenzen
 
 
 def keys(sel):

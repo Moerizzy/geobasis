@@ -8,9 +8,11 @@ from dataclasses import dataclass
 
 from ...area import Area
 from ...geo import ShapeIndex
+from ...grenzen import LEVEL_NAMES
 from ...models import Product, RemoteFile, Selection
 from ...tiles import parse_tile, parse_year
-from . import grenzen, portal, wfs
+from . import portal, wfs
+from .grenzen import provider as boundaries
 
 LICENSE = "Datenlizenz Deutschland – Zero – Version 2.0 (dl-de/zero-2-0)"
 LICENSE_URL = "https://www.govdata.de/dl-de/zero-2-0"
@@ -178,10 +180,10 @@ class AdminProduct(NrwProduct):
         path = self.path.format(year=year) if self.yearly else self.path
         lst = portal.listing(path)
         n = 5 if self.level == "kreis" else 3
-        units = {u.ags[:n]: u for u in grenzen.units(self.level)}
+        units = {u.ags[:n]: u for u in boundaries.units(self.level)}
         want = None
         if area is not None:
-            want = {u.ags[:n] for u in grenzen.units_for(self.level, area)}
+            want = {u.ags[:n] for u in boundaries.units_for(self.level, area)}
         out = []
         for f in lst.files:
             m = _AGS.search(f.name)
@@ -195,7 +197,7 @@ class AdminProduct(NrwProduct):
                 name=f.name, url=f.url, size=f.size, modified=f.timestamp, product=self.id,
                 key=ags, year=year, crs=25832, bounds=u.bbox.as_tuple() if u else None,
                 subdir=str(year) if year else "",
-                meta={grenzen.LEVEL_NAMES[self.level]: u.name} if u else {}))
+                meta={LEVEL_NAMES[self.level]: u.name} if u else {}))
         return Selection(sorted(out, key=lambda r: r.key or ""), self, area)
 
 
